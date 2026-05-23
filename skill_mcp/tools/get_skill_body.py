@@ -18,6 +18,7 @@ from typing import Optional
 
 from ..db.cache import TTLCache
 from ..db.qdrant_manager import qdrant_manager
+from ..telemetry import log_event
 
 _body_cache: TTLCache = TTLCache(
     ttl=float(os.getenv("CACHE_TTL_SECONDS", "300")),
@@ -77,6 +78,10 @@ def get_skill_body(skill_id: str, version: Optional[str] = None) -> str:
         body = qdrant_manager.get_body(skill_id)
 
     if body is None:
+        log_event("error", {
+            "type": "skill_not_found",
+            "skill_id": skill_id,
+        })
         return json.dumps(
             {
                 "error": f"skill_id '{skill_id}' not found.",
@@ -106,7 +111,13 @@ def get_skill_body(skill_id: str, version: Optional[str] = None) -> str:
                 msg += f" Use '{replaced_by}' instead."
             body_dict["deprecation_notice"] = msg
     except Exception:
-        pass
+        pass  # nosec B110: Ignore frontmatter parsing errors here
+
+    log_event("load", {
+        "skill_id": skill_id,
+        "version": actual_version or version or "latest",
+        "has_tier3": bool(body_dict["tier3_manifest"]["references"] or body_dict["tier3_manifest"]["scripts"] or body_dict["tier3_manifest"]["assets"]),
+    })
 
     result = json.dumps(body_dict, indent=2)
     _body_cache.set(cache_key, result)

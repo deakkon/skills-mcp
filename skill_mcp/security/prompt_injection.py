@@ -193,7 +193,7 @@ _HTML_INJECTION = re.compile(
 #             U+200E (LRM), U+200F (RLM), U+00AD (soft hyphen), U+FEFF (BOM)
 # Null byte: U+0000 - checked in _scan_unicode via ord()
 _UNICODE_ATTACK = re.compile(
-    "[‪-‮⁦-⁩]"    # BiDi override / embedding / isolate
+    "[‪-‮⁦-⁩]"    # nosemgrep: generic.unicode.security.bidi.contains-bidirectional-characters # nosec B613
     "|[​-‏­﻿]"    # Zero-width / soft-hyphen / BOM
     # (null byte U+0000 checked separately in _scan_unicode via ord())
 )
@@ -303,7 +303,7 @@ def _scan_base64_payloads(text: str) -> list[Finding]:
                     line=None,
                 ))
         except Exception:
-            pass  # Not valid base64 - not inherently suspicious
+            pass  # nosec B110: Not valid base64 - not inherently suspicious
     return findings
 
 

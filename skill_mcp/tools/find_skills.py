@@ -8,6 +8,7 @@ from ..db.cache import TTLCache
 from ..db.embedder import embedder
 from ..db.qdrant_manager import qdrant_manager
 from ..models.skill import SearchResponse
+from ..telemetry import log_event
 
 _search_cache: TTLCache = TTLCache(
     ttl=float(os.getenv("CACHE_TTL_SECONDS", "300")),
@@ -85,6 +86,14 @@ def find_relevant_skills(query: str, top_k: int = _DEFAULT_TOP_K) -> str:
             )
     else:
         usage_hint = "No skills found for this query. Proceed without a skill."
+
+    top_score = frontmatters[0].score if frontmatters and hasattr(frontmatters[0], "score") else 0.0
+    log_event("query", {
+        "query": query,
+        "top_k": top_k,
+        "num_results": len(frontmatters),
+        "top_score": top_score,
+    })
 
     response = SearchResponse(
         query=query,

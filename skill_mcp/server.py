@@ -44,7 +44,9 @@ from fastmcp import FastMCP
 # when env vars are already set; the server will still start correctly.
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    # Load .env explicitly from the project root (one level up from this file)
+    env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+    load_dotenv(env_path)
 except ImportError:
     pass
 
@@ -57,6 +59,7 @@ from .tools.get_skill_reference import get_skill_reference
 from .tools.get_skill_asset import get_skill_asset
 from .tools.run_skill_script import run_skill_script
 from .tools.list_all_skills import list_all_skills
+from .tools.planner_tools import skills_for_task, skills_plan_with_skills
 # pylint: enable=wrong-import-position
 
 
@@ -327,6 +330,38 @@ def _skills_list_all(
 ) -> str:
     return list_all_skills(limit=limit, offset=offset)
 
+
+@mcp.tool(
+    name="skills_for_task",
+    description=(
+        "PLANNING — Recommend skills for a specific atomic task.\n\n"
+        "Use this tool when you have a specific task to accomplish and want "
+        "the planner to recommend a targeted pack of skills to use. It uses "
+        "OpenRouter to analyze the task and find the best matches from the registry."
+    ),
+)
+def _skills_for_task(
+    task_description: Annotated[str, Field(description=(
+        "Detailed description of the task to be completed."
+    ))],
+) -> str:
+    return skills_for_task(task_description)
+
+
+@mcp.tool(
+    name="skills_plan_with_skills",
+    description=(
+        "PLANNING — Analyze a full implementation plan and recommend skills.\n\n"
+        "Use this tool when you have created an implementation_plan.md and want "
+        "to discover all skills you might need for the entire plan at once."
+    ),
+)
+def _skills_plan_with_skills(
+    plan: Annotated[str, Field(description=(
+        "The full text of your implementation plan or design document."
+    ))],
+) -> str:
+    return skills_plan_with_skills(plan)
 
 # ── Prompts ───────────────────────────────────────────────────────────────────
 

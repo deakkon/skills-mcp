@@ -17,6 +17,7 @@ import os
 
 from ..db.cache import TTLCache
 from ..db.qdrant_manager import qdrant_manager
+from ..telemetry import log_event
 
 _ref_cache: TTLCache = TTLCache(
     ttl=float(os.getenv("CACHE_TTL_SECONDS", "300")),
@@ -42,6 +43,9 @@ def get_skill_reference(skill_id: str, filename: str = "list") -> str:
         - Fetch mode: {"skill_id": ..., "filename": ..., "description": ..., "content": ...}
         - Error: {"error": "..."}
     """
+    if ".." in filename or "/" in filename or "\\" in filename:
+        return json.dumps({"error": "Invalid filename format."})
+        
     # ── List mode ─────────────────────────────────────────────────────────────
 
     if filename in ("list", "", "all"):
@@ -92,6 +96,11 @@ def get_skill_reference(skill_id: str, filename: str = "list") -> str:
             # Retry with correct casing
             payload = qdrant_manager.get_reference(skill_id, match)
         if payload is None:
+            log_event("error", {
+                "type": "reference_not_found",
+                "skill_id": skill_id,
+                "filename": filename,
+            })
             return json.dumps(
                 {
                     "error": (

@@ -20,13 +20,14 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
+import subprocess  # nosec B404: Subprocess used to execute sandbox scripts
 import sys
 import tempfile
 from typing import Any, Optional
 
 from ..db.cache import TTLCache
 from ..db.qdrant_manager import qdrant_manager
+from ..telemetry import log_event
 
 _script_list_cache: TTLCache = TTLCache(
     ttl=float(os.getenv("CACHE_TTL_SECONDS", "300")),
@@ -67,6 +68,9 @@ def run_skill_script(
         Script source is intentionally excluded from all response fields.
         The source is retrieved internally for execution only and discarded after.
     """
+    if ".." in filename or "/" in filename or "\\" in filename:
+        return json.dumps({"error": "Invalid filename format."})
+
     # ── List mode ─────────────────────────────────────────────────────────────
 
     if list_only or filename in ("list", "", "all"):
@@ -117,6 +121,11 @@ def run_skill_script(
         if match and match != filename:
             payload = qdrant_manager.get_script(skill_id, match)
         if payload is None:
+            log_event("error", {
+                "type": "script_not_found",
+                "skill_id": skill_id,
+                "filename": filename,
+            })
             return json.dumps(
                 {
                     "error": (
@@ -133,6 +142,11 @@ def run_skill_script(
     script_filename: str = payload.get("filename", filename)
 
     if not source.strip():
+        log_event("error", {
+            "type": "script_empty",
+            "skill_id": skill_id,
+            "filename": script_filename,
+        })
         return json.dumps(
             {"error": f"Script '{script_filename}' has no source content stored."}
         )
@@ -226,7 +240,7 @@ def _execute_script(
         # subprocess.run(timeout=…) raises TimeoutExpired but does NOT kill
         # the child process - the caller is responsible for cleanup.
         try:
-            with subprocess.Popen(
+            with subprocess.Popen(  # nosec B603: cmd is a list, shell is False by default
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,

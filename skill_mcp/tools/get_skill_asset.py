@@ -16,6 +16,7 @@ import os
 
 from ..db.cache import TTLCache
 from ..db.qdrant_manager import qdrant_manager
+from ..telemetry import log_event
 
 _asset_cache: TTLCache = TTLCache(
     ttl=float(os.getenv("CACHE_TTL_SECONDS", "300")),
@@ -41,6 +42,9 @@ def get_skill_asset(skill_id: str, filename: str = "list") -> str:
         - Fetch mode: {"skill_id": ..., "filename": ..., "asset_type": ..., "description": ..., "content": ...}
         - Error: {"error": "..."}
     """
+    if ".." in filename or "/" in filename or "\\" in filename:
+        return json.dumps({"error": "Invalid filename format."})
+
     # ── List mode ─────────────────────────────────────────────────────────────
 
     if filename in ("list", "", "all"):
@@ -90,6 +94,11 @@ def get_skill_asset(skill_id: str, filename: str = "list") -> str:
         if match and match != filename:
             payload = qdrant_manager.get_asset(skill_id, match)
         if payload is None:
+            log_event("error", {
+                "type": "asset_not_found",
+                "skill_id": skill_id,
+                "filename": filename,
+            })
             return json.dumps(
                 {
                     "error": (

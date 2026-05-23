@@ -43,7 +43,9 @@ REFERENCES_COLLECTION = os.getenv("REFERENCES_COLLECTION", "skill_references")
 SCRIPTS_COLLECTION = os.getenv("SCRIPTS_COLLECTION", "skill_scripts")
 ASSETS_COLLECTION = os.getenv("ASSETS_COLLECTION", "skill_assets")
 
-_VECTOR_DIM = 384
+from skill_mcp.config import settings
+
+_VECTOR_DIM = settings.embeddings_dimensions
 _DUMMY_VEC = [0.0]  # 1-dim placeholder for payload-only collections
 
 
@@ -59,8 +61,10 @@ class QdrantManager:
     # ── Connection ────────────────────────────────────────────────────────────
 
     def connect(self) -> None:
-        url = os.getenv("QDRANT_URL", "http://localhost:6333")
-        api_key = os.getenv("QDRANT_API_KEY")
+        url = settings.qdrant_url
+        if url == "http://qdrant:6333" and not os.path.exists("/.dockerenv"):
+            url = settings.qdrant_host_url
+        api_key = settings.qdrant_api_key or None
         self._client = QdrantClient(url=url, api_key=api_key)
 
     @property
@@ -116,7 +120,7 @@ class QdrantManager:
                 field_schema=PayloadSchemaType.KEYWORD,
             )
         except Exception:
-            pass  # Already exists - ignore
+            pass  # nosec B110: Already exists - ignore
 
         # ── Tier-3: references, scripts, assets (payload-only, skill_id+filename lookup) ──
 
@@ -253,11 +257,12 @@ class QdrantManager:
     # ── Query helpers ─────────────────────────────────────────────────────────
 
     def search_frontmatter(
-        self, query_vector: list[float], top_k: int = 5, score_threshold: float = 0.0
+        self, query_vector: list[float], top_k: int = 5, score_threshold: float = 0.0, query_filter: Optional[Filter] = None
     ) -> list[SkillFrontMatter]:
         response = self.client.query_points(
             collection_name=FRONTMATTER_COLLECTION,
             query=query_vector,
+            query_filter=query_filter,
             limit=top_k,
             score_threshold=score_threshold,
             with_payload=True,

@@ -7,10 +7,8 @@ Embeddings are generated via the Cloudflare Workers AI REST API
 deployed Worker at query time. No local GPU or sentence-transformers needed.
 
 Requires in .env:
-  QDRANT_URL       - Qdrant Cloud cluster URL
-  QDRANT_API_KEY   - Qdrant Cloud API key
-  WORKERS_AI_ACCOUNT_ID    - Cloudflare account ID (dashboard → right sidebar)
-  WORKERS_AI_API_TOKEN     - Cloudflare API token with "Workers AI Run" permission
+  QDRANT_URL       - Qdrant cluster URL
+  OLLAMA_BASE_URL  - Ollama API URL
 
 Tier-1/2 (pass 1):
   Reads skills_data/<slug>/SKILL.md, embeds frontmatter description+triggers,
@@ -42,63 +40,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-# ── Cloudflare Workers AI embedding ──────────────────────────────────────────
+from ..db.embedder import embedder
+from ..config import settings
 
-_CF_AI_URL = (
-    "https://api.cloudflare.com/client/v4/accounts/{account_id}"
-    "/ai/run/@cf/baai/bge-small-en-v1.5"
-)
-
-
-def _get_workers_ai_credentials() -> tuple[str, str]:
-    """Read WORKERS_AI_ACCOUNT_ID and WORKERS_AI_API_TOKEN from environment, exit on missing."""
-    account_id = os.getenv("WORKERS_AI_ACCOUNT_ID", "")
-    api_token = os.getenv("WORKERS_AI_API_TOKEN", "")
-    if not account_id or not api_token:
-        print(
-            "[seed] ERROR: WORKERS_AI_ACCOUNT_ID and WORKERS_AI_API_TOKEN must be set in .env\n"
-            "       Get them at https://dash.cloudflare.com\n"
-            "       Token needs 'Workers AI Run' permission.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    return account_id, api_token
-
-
-
-
-def _embed_batch(texts: list[str]) -> list[list[float]]:
-    """Embed all texts in a single Cloudflare Workers AI API call.
-
-    The @cf/baai/bge-small-en-v1.5 endpoint accepts an array of texts and
-    returns an array of vectors in one round-trip - much faster than N
-    individual calls for large skill catalogs.
-    """
-    if not texts:
-        return []
-    account_id, api_token = _get_workers_ai_credentials()
-    print(f"  [embed] sending {len(texts)} texts to Workers AI…", flush=True)
-    resp = requests.post(
-        _CF_AI_URL.format(account_id=account_id),
-        headers={"Authorization": f"Bearer {api_token}"},
-        json={"text": texts},
-        timeout=60,  # larger timeout for batch
-    )
-    resp.raise_for_status()
-    result = resp.json()
-    if not result.get("success"):
-        errors = result.get("errors") or []
-        msg = "; ".join(str(e.get("message", e)) for e in errors) if errors else "unknown error"
-        raise RuntimeError(f"Workers AI batch embedding failed: {msg}")
-    vectors: list[list[float]] = result["result"]["data"]
-    if len(vectors) != len(texts):
-        raise RuntimeError(
-            f"Workers AI returned {len(vectors)} vectors for {len(texts)} texts"
-        )
-    print(f"  [embed] {len(vectors)}/{len(texts)} done", flush=True)
-    return vectors
-
-_DEFAULT_SKILLS_DIR = Path(__file__).parent.parent / "skills_data"
+_DEFAULT_SKILLS_DIR = Path(settings.skills_root)
 
 # ── Tier-3 helper functions ───────────────────────────────────────────────────
 
@@ -380,8 +325,8 @@ def seed(skills_dir: Path = _DEFAULT_SKILLS_DIR) -> None:
         s["description"] + " " + " ".join(s["trigger_phrases"])
         for s in skills
     ]
-    print(f"\n[seed] Embedding {len(embed_texts)} skill descriptors via Cloudflare Workers AI…")
-    vectors = _embed_batch(embed_texts)
+    print(f"\n[seed] Embedding {len(embed_texts)} skill descriptors via Ollama…")
+    vectors = embedder.embed_batch(embed_texts)
 
     # Pre-compute has_tier3 flag for each skill
     has_tier3_map = {}

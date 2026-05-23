@@ -1,31 +1,24 @@
-"""Cloudflare Workers AI embedding client with TTL cache.
+"""Ollama embedding client with TTL cache.
 
-Uses @cf/baai/bge-small-en-v1.5 (384-dim) via the Cloudflare REST API -
-the same model the deployed Worker uses at query time, so local-server
-vectors and Worker query vectors are directly comparable.
-
-Required env vars (.env):
-  WORKERS_AI_ACCOUNT_ID - Cloudflare account ID
-  WORKERS_AI_API_TOKEN  - Cloudflare API token with "Workers AI Run" permission
+Uses the local Ollama instance specified in config.py
 """
 
 from __future__ import annotations
 
 import os
-
 import requests
 
 from .cache import TTLCache
+from skill_mcp.config import settings
 
 _CACHE_TTL = float(os.getenv("CACHE_TTL_SECONDS", "300"))
 _CACHE_MAX = int(os.getenv("CACHE_MAX_SIZE", "1000"))
-_MODEL = "@cf/baai/bge-small-en-v1.5"
 
-DIMENSION = 384
+DIMENSION = settings.embeddings_dimensions
 
 
 class Embedder:
-    """Cloudflare Workers AI embedding client with TTL cache."""
+    """Ollama embedding client with TTL cache."""
 
     DIMENSION: int = DIMENSION
 
@@ -35,11 +28,11 @@ class Embedder:
     # ── Public API ─────────────────────────────────────────────────────────────
 
     def load(self) -> None:
-        """No-op - Workers AI needs no local model loading."""
+        """No-op - Ollama loads models on demand."""
 
     @property
     def is_loaded(self) -> bool:
-        """Always True - Workers AI is a remote API, no local model to warm up."""
+        """Always True for the purpose of the API. Ollama handles actual loading."""
         return True
 
     def embed(self, text: str) -> list[float]:
@@ -52,11 +45,7 @@ class Embedder:
         return vec
 
     def embed_batch(self, texts: list[str]) -> list[list[float]]:
-        """Embed multiple texts in a single Workers AI API call (cache-aware).
-
-        Texts already in cache are served immediately; only uncached texts are
-        sent to the API in one round-trip, then results are merged back in order.
-        """
+        """Embed multiple texts in a single Ollama API call (cache-aware)."""
         if not texts:
             return []
 
@@ -73,48 +62,47 @@ class Embedder:
                 uncached_texts.append(text)
 
         if uncached_texts:
-            vectors = self._call_api_batch(uncached_texts)
-            for idx, vec in zip(uncached_indices, vectors):
-                self._cache.set(texts[idx], vec)
-                results[idx] = vec
+            # Batch size limits could be implemented here if needed.
+            # Ollama handles reasonable batch sizes natively.
+            batch_size = settings.embeddings_batch_size
+            for i in range(0, len(uncached_texts), batch_size):
+                batch_texts = uncached_texts[i:i + batch_size]
+                batch_indices = uncached_indices[i:i + batch_size]
+                
+                vectors = self._call_api_batch(batch_texts)
+                for idx, vec in zip(batch_indices, vectors):
+                    self._cache.set(texts[idx], vec)
+                    results[idx] = vec
 
         return results  # type: ignore[return-value]  # all slots filled above
 
     # ── Internal ───────────────────────────────────────────────────────────────
 
     def _call_api_batch(self, texts: list[str]) -> list[list[float]]:
-        """Send texts to Workers AI in one HTTP round-trip, return all vectors."""
-        account_id = os.getenv("WORKERS_AI_ACCOUNT_ID", "")
-        api_token = os.getenv("WORKERS_AI_API_TOKEN", "")
+        """Send texts to Ollama in one HTTP round-trip, return all vectors."""
+        base_url = settings.ollama_base_url
+        model = settings.embeddings_model
+        
+        # fallback to host URL if running outside docker but configured for docker
+        if base_url == "http://host.docker.internal:11434" and not os.path.exists("/.dockerenv"):
+            base_url = settings.ollama_host_url
 
-        if not account_id or not api_token:
-            raise RuntimeError(
-                "WORKERS_AI_ACCOUNT_ID and WORKERS_AI_API_TOKEN must be set in .env.\n"
-                "Get them at https://dash.cloudflare.com - "
-                "token needs 'Workers AI Run' permission."
-            )
-
-        url = (
-            f"https://api.cloudflare.com/client/v4/accounts/{account_id}"
-            f"/ai/run/{_MODEL}"
-        )
+        url = f"{base_url.rstrip('/')}/api/embed"
         resp = requests.post(
             url,
-            headers={"Authorization": f"Bearer {api_token}"},
-            json={"text": texts},
-            timeout=60,
+            json={"model": model, "input": texts, "keep_alive": settings.embeddings_keep_alive},
+            timeout=120,
         )
-        resp.raise_for_status()
+        
+        if resp.status_code != 200:
+            raise RuntimeError(f"Ollama embedding failed: {resp.text}")
+            
         result = resp.json()
-        if not result.get("success"):
-            # Do not include the raw API response - it may contain account details or tokens.
-            errors = result.get("errors") or []
-            msg = "; ".join(str(e.get("message", e)) for e in errors) if errors else "unknown error"
-            raise RuntimeError(f"Workers AI embedding failed: {msg}")
-        vectors: list[list[float]] = result["result"]["data"]
+        vectors: list[list[float]] = result.get("embeddings", [])
+        
         if len(vectors) != len(texts):
             raise RuntimeError(
-                f"Workers AI returned {len(vectors)} vectors for {len(texts)} texts"
+                f"Ollama returned {len(vectors)} vectors for {len(texts)} texts"
             )
         return vectors
 
