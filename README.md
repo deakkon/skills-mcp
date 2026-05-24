@@ -21,6 +21,24 @@ Semantic discovery · Progressive loading · 33 bundled skills · Self-hosted on
 
 ---
 
+## Fork Enhancements: Fully Local Dev Stack
+
+This fork adapts `skills-mcp` from a Cloudflare Worker / Cloud-first deployment to a **fully local, self-contained AI engineering assistant stack**.
+
+Here is a comparison of the differences between this local solution and the original codebase:
+
+| Feature / Area | Original Codebase | Our Local Fork Solution |
+|---|---|---|
+| **Vector Database** | Required a Cloudflare-hosted Qdrant or Qdrant Cloud account | Fully self-hosted local **Qdrant** running inside Docker Compose with a persistent data volume. |
+| **Embeddings Generation** | Relied on Cloudflare Workers AI (`@cf/baai/bge-large-en-v1.5`) | Fully local **Ollama** embeddings (running on the host with `nomic-embed-text` by default). |
+| **Task Planner** | No built-in task planner or LLM planning routing | Integrated **OpenRouter** planning provider to dynamically resolve and attach relevant skills to atomic tasks. |
+| **Telemetry & Observability** | Basic stdout/stderr logging | Dual-destination telemetry logging: structured JSONL (`events.jsonl`) and SQLite-based execution metrics database. |
+| **Security Hardening** | No built-in SAST auditing or suppressions | Audited and verified with `safety`, `semgrep`, and `bandit` with appropriate false-positive suppressions. |
+| **Docker Orchestration** | Deployable as a Cloudflare Worker | Managed multi-service Docker Compose stack (Qdrant + seed + MCP server) with non-root security context and read-only skill mounts. |
+| **MCP Syncing** | Manually configured per-platform | Sync utility (`scripts/sync_mcp.py`) that propagates configs to all agent environments (Cursor, Warp, Codex, Roo-Cline, etc.) from `~/.mcp/canonical.json`. |
+
+---
+
 ## The Problem
 
 AI agents have broad knowledge, but narrow expertise.
