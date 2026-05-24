@@ -12,10 +12,8 @@ Semantic discovery · Progressive loading · 33 bundled skills · Self-hosted on
 [![Website](https://img.shields.io/badge/website-skills--mcp-black.svg)](https://skills-mcp-jignesh.vercel.app/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://python.org)
-[![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020.svg)](https://workers.cloudflare.com)
 [![Skills](https://img.shields.io/badge/bundled%20skills-33-brightgreen.svg)](skill_mcp/skills_data/)
 [![skills-mcp MCP server](https://glama.ai/mcp/servers/Jignesh-Ponamwar/skills-mcp/badges/score.svg)](https://glama.ai/mcp/servers/Jignesh-Ponamwar/skills-mcp)
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Jignesh-Ponamwar/skills-mcp)
 
 </div>
 
@@ -415,31 +413,7 @@ make docker-seed   # Re-seed Qdrant database after adding new local skills
 
 Add to your MCP client config (`.mcp.json`, Claude Code settings, Cursor settings, etc.):
 
-**Production (Cloudflare Worker):**
-```json
-{
-  "mcpServers": {
-    "skill-mcp": {
-      "transport": "sse",
-      "url": "https://skill-mcp.<your-subdomain>.workers.dev/sse"
-    }
-  }
-}
-```
-
-**Local dev (`wrangler dev`):**
-```json
-{
-  "mcpServers": {
-    "skill-mcp": {
-      "transport": "sse",
-      "url": "http://localhost:8787/sse"
-    }
-  }
-}
-```
-
-**Local Python server** (needed for `skills_run_script`  Cloudflare Workers cannot run subprocesses):
+**Local Python server (stdio):**
 ```json
 {
   "mcpServers": {
@@ -447,6 +421,18 @@ Add to your MCP client config (`.mcp.json`, Claude Code settings, Cursor setting
       "command": "python",
       "args": ["-m", "skill_mcp.server"],
       "cwd": "/path/to/skill-mcp"
+    }
+  }
+}
+```
+
+**Local Docker Compose server (SSE):**
+```json
+{
+  "mcpServers": {
+    "skill-mcp": {
+      "transport": "sse",
+      "url": "http://localhost:8000/sse"
     }
   }
 }
@@ -560,18 +546,13 @@ Code blocks are stripped before structural checks - TypeScript generics (`Promis
 
 Full threat model: [`THREAT_MODEL.md`](THREAT_MODEL.md) · Hosted instance trust model: [`TRANSPARENCY.md`](TRANSPARENCY.md)
 
-### Runtime hardening (Worker + local server)
+### Runtime hardening (Local server)
 
-- **Per-IP rate limiting** - 60 requests/minute sliding window (configurable via `RATE_LIMIT_RPM`); returns HTTP 429 when exceeded; stale entry eviction at 10k IPs; Worker-only
-- **CORS headers** - `Access-Control-Allow-Origin: *` on all Worker responses; supports browser-based MCP clients and testers (Glama, MCP Inspector)
-- **1 MB request body limit** - POST bodies over 1 MB rejected with HTTP 413 before parsing
 - **Sanitized error messages** - upstream URLs, Qdrant responses, and stack traces never reach MCP clients
-- **Security response headers** - `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Cache-Control: no-store`, `Referrer-Policy: no-referrer`
-- **Query string limits** - 2 KB total, 16 parameters, 128-char keys, 256-char values
 - **Input validation** - `tools/call` arguments type-checked; malformed JSON-RPC returns proper error codes
 - **Query length limit** - `skills_find_relevant` rejects queries over 2,000 characters
 
-Script execution (`skills_run_script`, local server only):
+Script execution (`skills_run_script`):
 
 - Isolated `tempfile.TemporaryDirectory()` - deleted after each run
 - 30-second hard timeout with explicit process kill
@@ -579,8 +560,6 @@ Script execution (`skills_run_script`, local server only):
 - Blocked environment variable injection (`PATH`, `LD_PRELOAD`, `PYTHONPATH`, etc.)
 - Script source **never returned to the agent** - only `stdout / stderr / exit_code`
 - Output truncated at 10,000 characters per stream
-
-In the deployed Cloudflare Worker, `skills_run_script` returns the script manifest only  the Pyodide runtime cannot run subprocesses.
 
 ---
 
@@ -590,9 +569,9 @@ Three top-level directories own three distinct concerns:
 
 - **`skill_mcp/`** - the Python package. Everything the server needs at runtime lives here: Pydantic models (`models/`), Qdrant integration (`db/`), MCP tool implementations (`tools/`), the prompt-injection scanner (`security/`), the seed script (`seed/`), the local FastMCP entry point (`server.py`), and the skill registry itself (`skills_data/`). If you are adding a skill, editing a tool, or touching the data layer, you are working here.
 
-- **`src/`** - the Cloudflare Workers deployment target. Contains a single file, `worker.py`, which re-implements all six MCP tools as a self-contained Cloudflare Python Worker (no external packages, Pyodide-compatible). `wrangler.jsonc` at the repo root points here. Edit this only when changing the deployed Worker behaviour.
+- **`src/`** - legacy Cloudflare Workers target directory (retained for backward reference, inactive in the local setup).
 
-- **`scripts/`** - developer and CI utilities that are not part of the importable package. `setup.sh` / `setup.ps1` are one-shot interactive wizards; `validate_skills.py` is the SKILL.md schema + prompt-injection validator invoked by both `make validate` and the GitHub Actions skill-validation workflow.
+- **`scripts/`** - local developer, Docker orchestration, validation, and sync/migration utilities. Contains `validate_skills.py` (SKILL.md validator), Docker stack lifecycle controls, and `sync_mcp.py` to propagate configs from the host canonical MCP registry.
 
 ```
 skill-mcp/
@@ -605,10 +584,10 @@ skill-mcp/
 │   ├── tools/                     # MCP tool implementations (local server)
 │   ├── skills_data/               # 33 skill folders - one SKILL.md each
 │   └── server.py                  # Local FastMCP entry point (stdio / HTTP)
-├── src/
-│   └── worker.py                  # Cloudflare Python Worker - all 6 tools, SSE + Streamable HTTP, rate limiting, CORS
-├── scripts/
-│   ├── setup.sh / setup.ps1       # One-shot setup wizards (Linux/macOS + Windows)
+├── src/                           # Legacy Cloudflare Workers target directory (inactive)
+├── scripts/                       # Local developer, Docker, validation, and sync/migration scripts
+│   ├── setup.sh / setup.ps1
+│   ├── sync_mcp.py                # Propagates host-canonical settings to all agent configurations
 │   └── validate_skills.py         # SKILL.md validator - schema + injection scan
 ├── master-skill/                  # Drop-in agent instruction files (8 platforms)
 │   └── platforms/
@@ -624,8 +603,7 @@ skill-mcp/
 ├── .github/workflows/
 │   ├── tests.yml                  # pytest on every push (unit tests, no external deps)
 │   └── validate-skills.yml        # SKILL.md lint + injection scan on PRs
-├── wrangler.jsonc                  # Workers AI binding + SQLite Durable Objects config
-├── Makefile                        # Automation: setup, seed, deploy, dev, docker, validate
+├── Makefile                        # Automation: setup, seed, dev, docker, validate
 ├── Dockerfile / docker-compose.yml # One-command local stack: Qdrant + seed + server
 ├── pyproject.toml                  # Package metadata + optional dependency groups
 ├── .env.example                    # Credential template - copy to .env
@@ -646,7 +624,7 @@ skill-mcp/
 
 - **Script execution is local-only** - `skills_run_script` requires the local Python server. The Cloudflare Worker returns the script manifest but cannot execute subprocesses - the Pyodide runtime does not support `subprocess`. Any skill workflow that calls `skills_run_script` must point the MCP client at `python -m skill_mcp.server` instead of the Worker URL.
 
-- **Embedding model is pinned at seed time** - Vectors are generated with `@cf/baai/bge-small-en-v1.5` (384-dim) at both seed time and query time. If Cloudflare Workers AI retires or changes this model, all vectors become incomparable and the entire skill collection must be re-seeded.
+- **Embedding model is pinned at seed time** - Vectors are generated with the local Ollama embedding model (`nomic-embed-text` at 768 dimensions by default) at both seed time and query time. If you change the model in settings, the entire skill collection must be re-seeded.
 
 - **Search quality depends on trigger phrase quality** - Semantic search is only as good as the `triggers` written in each `SKILL.md`. Skills with vague or overlapping trigger phrases will surface for unrelated queries and dilute results. One skill with poorly-written triggers degrades the entire registry.
 
@@ -685,7 +663,7 @@ Apache 2.0  see [LICENSE](LICENSE).
 
 <div align="center">
 
-Built with [Cloudflare Workers](https://workers.cloudflare.com) · [Qdrant](https://qdrant.tech) · [FastMCP](https://github.com/jlowin/fastmcp) · [MCP](https://modelcontextprotocol.io)
+Built with [Qdrant](https://qdrant.tech) · [Ollama](https://ollama.com) · [FastMCP](https://github.com/jlowin/fastmcp) · [MCP](https://modelcontextprotocol.io)
 
 </div>
 
