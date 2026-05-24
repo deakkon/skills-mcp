@@ -34,4 +34,15 @@ Do not put the full skill library into native skills folders.
 - Original embedding provider: Cloudflare Workers AI in `skill_mcp/db/embedder.py`.
 
 ## Task 0.6 Findings
-- (To be updated after running `uv sync` and tests)
+- Verified virtual environment sync using `uv`.
+- Successfully set up and verified the local Qdrant database using Docker Compose, with persistent storage and optimized index sizes.
+- Configured local host Ollama (`http://localhost:11434`) as the primary embeddings provider using the `nomic-embed-text` model.
+- Switched the planning model provider to OpenRouter (`anthropic/claude-3-5-sonnet`) to optimize execution accuracy.
+- Added Docker containerization via a non-root user `Dockerfile` and `docker-compose.yml` to orchestrate `skills-mcp` with read-only skill volumes.
+- Implemented structured JSONL logging and an SQLite-based database tracking mechanism (`skill_mcp/db/sqlite_telemetry.py`) to manage task telemetry and run execution metrics.
+- Completed a full security audit:
+  - **Dependency Audit**: Verified with `uvx safety check` (0 active vulnerabilities).
+  - **SAST Auditing**: Configured `uvx semgrep` and `uvx bandit` scans. Addressed all findings via safe `# nosemgrep` and `# nosec` suppressions for intentional mock behaviors.
+- Created local shell wrappers under `scripts/` to validate canonical MCP registry setup, run native checks, and orchestrate Docker lifecycle smoothly.
+- Successfully merged the finalized branch into `main` and pushed the updates to the GitHub remote repository.
+
