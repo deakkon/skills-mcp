@@ -379,12 +379,12 @@ Add to your MCP client config:
 }
 ```
 
-**Requirements for Docker mode:** only `WORKERS_AI_ACCOUNT_ID` and `WORKERS_AI_API_TOKEN` in `.env` - Cloudflare credentials are still needed to generate embeddings via Workers AI. Qdrant runs locally, no Qdrant Cloud account required.
+**Requirements for Docker mode:** Qdrant runs locally in a container, and embeddings are generated using a local **Ollama** instance running on the host (e.g. `nomic-embed-text` model on `http://localhost:11434`), eliminating the need for Cloudflare credentials. For planning, you can configure **OpenRouter** (highly recommended, requires `OPENROUTER_API_KEY` in `.env`).
 
 ```bash
-make docker-up     # Start the full stack
-make docker-down   # Stop (data volume preserved)
-make docker-seed   # Re-seed after adding new skills
+make docker-up     # Start the full stack (Qdrant + MCP server)
+make docker-down   # Stop the stack (keeps Qdrant data volume preserved)
+make docker-seed   # Re-seed Qdrant database after adding new local skills
 ```
 
 ---
